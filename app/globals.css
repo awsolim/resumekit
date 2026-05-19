@@ -50,6 +50,15 @@ body {
   box-shadow: 0 20px 40px rgb(0 0 0 / 0.18);
 }
 
+.print-shell {
+  align-items: flex-start;
+  background: white;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+}
+
 /* Resume text styles */
 
 .resume-header {
@@ -70,6 +79,11 @@ body {
   margin-top: 4px;
   font-size: 11px;
   line-height: 1.2;
+}
+
+.resume-contact a {
+  color: inherit;
+  text-decoration: none;
 }
 
 .resume-body {
@@ -107,6 +121,7 @@ body {
 }
 
 .resume-block-main {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -129,7 +144,14 @@ body {
   flex-shrink: 0;
   font-size: 10px;
   line-height: 1.15;
+  max-width: 42%;
+  overflow: visible;
   text-align: right;
+  white-space: normal;
+}
+
+.resume-gpa {
+  text-align: center;
 }
 
 .resume-bullets {
@@ -188,5 +210,11 @@ body {
     position: fixed !important;
     top: 0 !important;
     width: var(--resume-page-width) !important;
+  }
+
+  .print-shell {
+    display: block !important;
+    min-height: auto !important;
+    padding: 0 !important;
   }
 }
