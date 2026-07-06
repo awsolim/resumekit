@@ -16,7 +16,10 @@ export const metadata: Metadata = {
   title: "ResumeKit",
   description: "Build, save, and export tailored resumes.",
   applicationName: "ResumeKit",
-  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
