@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import type {
   ResumeContactItem,
-  ResumeContactType,
   ResumeBlock,
   ResumeHeader,
   ResumeSectionDefinition,
@@ -62,14 +61,6 @@ function inputToStack(value: string) {
     .filter(Boolean);
 }
 
-const contactTypeOptions: ResumeContactType[] = [
-  "text",
-  "email",
-  "phone",
-  "link",
-  "location",
-];
-
 const defaultNewSectionFields: SectionFieldConfig = {
   subtitle: true,
   location: true,
@@ -105,9 +96,13 @@ export default function EditorPanel({
   onUpdateBullet,
   onDeleteBullet,
 }: EditorPanelProps) {
-  const [collapsedSections, setCollapsedSections] = useState<string[]>([]);
+  const [collapsedSections, setCollapsedSections] = useState<string[]>(() =>
+    sectionDefinitions.map((section) => section.id),
+  );
   const [headerCollapsed, setHeaderCollapsed] = useState(true);
-  const [collapsedBlocks, setCollapsedBlocks] = useState<string[]>([]);
+  const [collapsedBlocks, setCollapsedBlocks] = useState<string[]>(() =>
+    blocks.map((block) => block.id),
+  );
   const [editingBlockIds, setEditingBlockIds] = useState<string[]>([]);
   const [draggedSectionId, setDraggedSectionId] = useState<string | null>(null);
   const [draggedBlock, setDraggedBlock] = useState<{
@@ -118,6 +113,7 @@ export default function EditorPanel({
     blockId: string;
     bulletId: string;
   } | null>(null);
+  const [linkMenuItemId, setLinkMenuItemId] = useState<string | null>(null);
   const [draftBullets, setDraftBullets] = useState<Record<string, string>>({});
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
@@ -180,6 +176,37 @@ export default function EditorPanel({
       ...header,
       contactItems: header.contactItems.filter((item) => item.id !== itemId),
     });
+  }
+
+  function applyContactLinkPreset(
+    itemId: string,
+    preset: "email" | "linkedin" | "github" | "link",
+  ) {
+    const presetValues = {
+      email: {
+        label: "Email",
+        type: "email" as const,
+        href: "mailto:",
+      },
+      linkedin: {
+        label: "LinkedIn",
+        type: "link" as const,
+        href: "https://linkedin.com/in/",
+      },
+      github: {
+        label: "GitHub",
+        type: "link" as const,
+        href: "https://github.com/",
+      },
+      link: {
+        label: "Link",
+        type: "link" as const,
+        href: "",
+      },
+    };
+
+    updateContactItem(itemId, presetValues[preset]);
+    setLinkMenuItemId(null);
   }
 
   function getOrderedBlocks(sectionId: SectionId) {
@@ -306,32 +333,20 @@ export default function EditorPanel({
 
   return (
     <div className="min-w-0">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Editor</h2>
-
-        <button
-          type="button"
-          onClick={() => setSectionModalOpen(true)}
-          className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-semibold hover:bg-neutral-100"
-        >
-          ＋ Add Section
-        </button>
-      </div>
-
-      <div className="min-w-0 space-y-4">
-        <section className="min-w-0 rounded-2xl border border-neutral-200 bg-neutral-50">
-          <div className="flex w-full min-w-0 items-center gap-2 px-4 py-3">
-            <span className="w-4 shrink-0 text-center text-neutral-300">•</span>
+      <div className="min-w-0 divide-y divide-slate-200 border-y border-slate-200">
+        <section className="min-w-0 bg-white">
+          <div className="flex w-full min-w-0 items-center gap-3 py-4">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-sky-400" />
 
             <button
               type="button"
               onClick={() => setHeaderCollapsed((current) => !current)}
               className="min-w-0 flex-1 text-left"
             >
-              <span className="block truncate text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
-                Resume Header
+              <span className="block truncate text-sm font-semibold text-slate-950">
+                Resume Title
               </span>
-              <span className="mt-1 block truncate text-xs text-neutral-500">
+              <span className="mt-1 block truncate text-xs text-slate-500">
                 {header.name || "Untitled"} · {header.contactItems.length} contact{" "}
                 {header.contactItems.length === 1 ? "item" : "items"}
               </span>
@@ -340,7 +355,7 @@ export default function EditorPanel({
             <button
               type="button"
               onClick={() => setHeaderCollapsed((current) => !current)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-neutral-500 hover:bg-neutral-100"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-slate-500 hover:bg-sky-50 hover:text-sky-700"
               aria-label="Collapse resume header"
             >
               {headerCollapsed ? "▾" : "▴"}
@@ -353,9 +368,9 @@ export default function EditorPanel({
             }`}
           >
             <div className="min-h-0 min-w-0">
-              <div className="min-w-0 space-y-3 border-t border-neutral-200 p-3">
+              <div className="min-w-0 space-y-4 pb-5 pl-5 pr-1">
                 <FieldInput
-                  label="Name"
+                  label="Display text"
                   value={header.name}
                   onChange={updateHeaderName}
                 />
@@ -365,12 +380,17 @@ export default function EditorPanel({
                     const itemSelected =
                       selection.selectedContactItemIds.includes(item.id);
 
+                    const hasLinkEditor =
+                      item.type !== "text" ||
+                      Boolean(item.href) ||
+                      linkMenuItemId === item.id;
+
                     return (
                     <div
                       key={item.id}
-                      className="grid min-w-0 gap-2 rounded-xl border border-neutral-200 bg-white p-3"
+                      className="grid min-w-0 gap-2 border-l-2 border-sky-100 bg-white py-2 pl-3"
                     >
-                      <div className="grid min-w-0 grid-cols-[auto_1fr_auto] gap-2">
+                      <div className="grid min-w-0 grid-cols-[auto_1fr_auto_auto] gap-2">
                         <input
                           type="checkbox"
                           checked={itemSelected}
@@ -387,55 +407,76 @@ export default function EditorPanel({
                           }
                         />
 
+                        <div className="relative mt-5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLinkMenuItemId((current) =>
+                                current === item.id ? null : item.id,
+                              )
+                            }
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm hover:bg-sky-50 ${
+                              hasLinkEditor ? "text-sky-700" : "text-slate-500"
+                            }`}
+                            title="Add link"
+                            aria-label="Add link"
+                          >
+                            <LinkIcon />
+                          </button>
+
+                          {linkMenuItemId === item.id && (
+                            <div className="absolute right-0 z-20 mt-2 w-36 rounded-lg border border-sky-100 bg-white p-1 text-sm shadow-xl shadow-sky-950/10">
+                              <LinkPresetButton
+                                label="Email"
+                                onClick={() =>
+                                  applyContactLinkPreset(item.id, "email")
+                                }
+                              />
+                              <LinkPresetButton
+                                label="LinkedIn"
+                                onClick={() =>
+                                  applyContactLinkPreset(item.id, "linkedin")
+                                }
+                              />
+                              <LinkPresetButton
+                                label="GitHub"
+                                onClick={() =>
+                                  applyContactLinkPreset(item.id, "github")
+                                }
+                              />
+                              <LinkPresetButton
+                                label="Insert Link"
+                                onClick={() =>
+                                  applyContactLinkPreset(item.id, "link")
+                                }
+                              />
+                            </div>
+                          )}
+                        </div>
+
                         <button
                           type="button"
                           onClick={() => deleteContactItem(item.id)}
                           className="mt-5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm text-red-600 hover:bg-red-50"
                           title="Delete contact item"
                         >
-                          🗑
+                          <TrashIcon />
                         </button>
                       </div>
 
-                      <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                      {hasLinkEditor && (
                         <FieldInput
-                          label="Label"
-                          value={item.label}
+                          label="Link"
+                          value={item.href ?? ""}
+                          placeholder="mailto:, https://linkedin.com/in/, or https://"
                           onChange={(value) =>
-                            updateContactItem(item.id, { label: value })
+                            updateContactItem(item.id, {
+                              href: value,
+                              type: value ? item.type : "link",
+                            })
                           }
                         />
-
-                        <label className="block min-w-0">
-                          <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-neutral-500">
-                            Type
-                          </span>
-                          <select
-                            value={item.type}
-                            onChange={(event) =>
-                              updateContactItem(item.id, {
-                                type: event.target.value as ResumeContactType,
-                              })
-                            }
-                            className="w-full min-w-0 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-500"
-                          >
-                            {contactTypeOptions.map((type) => (
-                              <option key={type} value={type}>
-                                {type}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-
-                      <FieldInput
-                        label="Href"
-                        value={item.href ?? ""}
-                        placeholder="mailto:, tel:, or https://"
-                        onChange={(value) =>
-                          updateContactItem(item.id, { href: value })
-                        }
-                      />
+                      )}
                     </div>
                     );
                   })}
@@ -444,9 +485,9 @@ export default function EditorPanel({
                 <button
                   type="button"
                   onClick={addContactItem}
-                  className="w-full rounded-xl border border-dashed border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-600 hover:border-neutral-500 hover:bg-neutral-50"
+                  className="w-full rounded-lg border border-dashed border-sky-200 bg-sky-50/60 px-3 py-2 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-50"
                 >
-                  ＋ Add Contact Item
+                  + Add Display Text
                 </button>
               </div>
             </div>
@@ -457,6 +498,8 @@ export default function EditorPanel({
           const sectionBlocks = getOrderedBlocks(section.id);
           const orderedBlockIds = sectionBlocks.map((block) => block.id);
           const sectionCollapsed = collapsedSections.includes(section.id);
+          const inlineBulletBlock =
+            isInlineBulletSection(section, sectionBlocks) ? sectionBlocks[0] : null;
           const selectedCount = sectionBlocks.filter((block) =>
             selection.selectedBlockIds.includes(block.id),
           ).length;
@@ -466,16 +509,16 @@ export default function EditorPanel({
             <section
               key={section.id}
               onDragOver={(event) => handleSectionDragOver(event, section.id)}
-              className={`min-w-0 rounded-2xl border border-neutral-200 bg-neutral-50 transition ${
+              className={`min-w-0 bg-white transition ${
                 isSectionDragging ? "opacity-60" : ""
               }`}
             >
-              <div className="flex w-full min-w-0 items-center gap-2 px-4 py-3">
+              <div className="flex w-full min-w-0 items-center gap-3 py-4">
                 <span
                   draggable
                   onDragStart={() => setDraggedSectionId(section.id)}
                   onDragEnd={() => setDraggedSectionId(null)}
-                  className="shrink-0 cursor-grab select-none text-neutral-400"
+                  className="shrink-0 cursor-grab select-none text-slate-300 hover:text-sky-500"
                   title="Drag section"
                 >
                   ⋮⋮
@@ -486,10 +529,10 @@ export default function EditorPanel({
                   onClick={() => toggleSectionCollapse(section.id)}
                   className="min-w-0 flex-1 text-left"
                 >
-                  <span className="block truncate text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+                  <span className="block truncate text-sm font-semibold text-slate-950">
                     {section.label}
                   </span>
-                  <span className="mt-1 block text-xs text-neutral-500">
+                  <span className="mt-1 block text-xs text-slate-500">
                     {selectedCount} of {sectionBlocks.length} blocks selected
                   </span>
                 </button>
@@ -500,13 +543,13 @@ export default function EditorPanel({
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-red-600 hover:bg-red-50"
                   title="Delete section from this document"
                 >
-                  🗑
+                  <TrashIcon />
                 </button>
 
                 <button
                   type="button"
                   onClick={() => toggleSectionCollapse(section.id)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-neutral-500 hover:bg-neutral-100"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg font-semibold text-slate-500 hover:bg-sky-50 hover:text-sky-700"
                   aria-label={`Collapse ${section.label}`}
                 >
                   {sectionCollapsed ? "▾" : "▴"}
@@ -519,8 +562,34 @@ export default function EditorPanel({
                 }`}
               >
                 <div className="min-h-0 min-w-0">
-                  <div className="min-w-0 space-y-3 border-t border-neutral-200 p-3">
-                    {sectionBlocks.map((block) => {
+                  <div className="min-w-0 space-y-3 pb-5 pl-5 pr-1">
+                    {inlineBulletBlock ? (
+                      <InlineBulletList
+                        block={inlineBulletBlock}
+                        selection={selection}
+                        orderedBullets={getOrderedBullets(inlineBulletBlock)}
+                        draggedBullet={draggedBullet}
+                        draftValue={draftBullets[inlineBulletBlock.id] ?? ""}
+                        onDraftChange={(value) =>
+                          updateDraftBullet(inlineBulletBlock.id, value)
+                        }
+                        onDraftSubmit={() =>
+                          submitDraftBullet(inlineBulletBlock.id)
+                        }
+                        onToggleBullet={onToggleBullet}
+                        onUpdateBullet={onUpdateBullet}
+                        onDeleteBullet={onDeleteBullet}
+                        onDragBulletStart={(bulletId) =>
+                          setDraggedBullet({
+                            blockId: inlineBulletBlock.id,
+                            bulletId,
+                          })
+                        }
+                        onDragBulletEnd={() => setDraggedBullet(null)}
+                        onBulletDragOver={handleBulletDragOver}
+                      />
+                    ) : (
+                    sectionBlocks.map((block) => {
                       const blockSelected =
                         selection.selectedBlockIds.includes(block.id);
                       const blockCollapsed = collapsedBlocks.includes(block.id);
@@ -546,11 +615,11 @@ export default function EditorPanel({
                               orderedBlockIds,
                             )
                           }
-                          className={`min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-white transition ${
+                          className={`min-w-0 overflow-hidden border-l-2 border-slate-100 bg-white transition hover:border-sky-200 ${
                             isBlockDragging ? "opacity-60" : ""
                           }`}
                         >
-                          <div className="flex min-w-0 items-start gap-2 p-3">
+                          <div className="flex min-w-0 items-start gap-2 py-2 pl-3">
                             <span
                               draggable
                               onDragStart={() =>
@@ -560,7 +629,7 @@ export default function EditorPanel({
                                 })
                               }
                               onDragEnd={() => setDraggedBlock(null)}
-                              className="mt-0.5 w-4 shrink-0 cursor-grab select-none text-center text-neutral-400"
+                              className="mt-0.5 w-4 shrink-0 cursor-grab select-none text-center text-slate-300 hover:text-sky-500"
                               title="Drag block"
                             >
                               ⋮⋮
@@ -584,12 +653,12 @@ export default function EditorPanel({
                               </span>
 
                               {block.subtitle && section.fields.subtitle && (
-                                <span className="mt-0.5 block truncate text-xs text-neutral-600">
+                                <span className="mt-0.5 block truncate text-xs text-slate-600">
                                   {block.subtitle}
                                 </span>
                               )}
 
-                              <span className="mt-1 block text-xs text-neutral-500">
+                              <span className="mt-1 block text-xs text-slate-500">
                                 {selectedBulletCount} of {block.bullets.length}{" "}
                                 bullets selected
                               </span>
@@ -599,20 +668,20 @@ export default function EditorPanel({
                               <button
                                 type="button"
                                 onClick={() => toggleBlockEdit(block.id)}
-                                className={`rounded-lg px-2 py-1 text-sm hover:bg-neutral-100 ${
+                                className={`rounded-lg px-2 py-1 text-sm hover:bg-sky-50 ${
                                   blockEditing
-                                    ? "bg-neutral-100 text-neutral-950"
-                                    : "text-neutral-500"
+                                    ? "bg-sky-50 text-sky-700"
+                                    : "text-slate-500"
                                 }`}
                                 title="Edit block fields"
                               >
-                                ✎
+                                <EditIcon />
                               </button>
 
                               <button
                                 type="button"
                                 onClick={() => onDuplicateBlock(block.id)}
-                                className="rounded-lg px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
+                                className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-sky-50"
                                 title="Duplicate block"
                               >
                                 ⧉
@@ -624,13 +693,13 @@ export default function EditorPanel({
                                 className="rounded-lg px-2 py-1 text-sm text-red-600 hover:bg-red-50"
                                 title="Delete block"
                               >
-                                🗑
+                                <TrashIcon />
                               </button>
 
                               <button
                                 type="button"
                                 onClick={() => toggleBlockCollapse(block.id)}
-                                className="rounded-lg px-2 py-1 text-sm font-semibold text-neutral-500 hover:bg-neutral-100"
+                                className="rounded-lg px-2 py-1 text-sm font-semibold text-slate-500 hover:bg-sky-50 hover:text-sky-700"
                                 aria-label={`Collapse ${block.title}`}
                               >
                                 {blockCollapsed ? "▾" : "▴"}
@@ -644,9 +713,9 @@ export default function EditorPanel({
                             }`}
                           >
                             <div className="min-h-0 min-w-0">
-                              <div className="min-w-0 space-y-3 border-t border-neutral-200 p-3">
+                              <div className="min-w-0 space-y-3 pb-3 pl-9 pt-2">
                                 {blockEditing && (
-                                  <div className="grid min-w-0 gap-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+                                  <div className="grid min-w-0 gap-2 bg-sky-50/50 p-3">
                                     <FieldInput
                                       label="Title"
                                       value={block.title}
@@ -761,10 +830,10 @@ export default function EditorPanel({
                                               orderedBulletIds,
                                             )
                                           }
-                                          className={`flex w-full max-w-full min-w-0 items-start gap-2 overflow-hidden rounded-lg border px-2 py-1.5 text-sm text-neutral-700 transition ${
+                                          className={`flex w-full max-w-full min-w-0 items-start gap-2 overflow-hidden rounded-lg border px-2 py-1.5 text-sm text-slate-700 transition ${
                                             isDragging
-                                              ? "border-neutral-300 bg-neutral-100 opacity-60"
-                                              : "border-transparent hover:border-neutral-200 hover:bg-neutral-50"
+                                              ? "border-sky-200 bg-sky-50 opacity-60"
+                                              : "border-transparent hover:border-sky-100 hover:bg-sky-50/50"
                                           }`}
                                         >
                                           <span
@@ -778,7 +847,7 @@ export default function EditorPanel({
                                             onDragEnd={() =>
                                               setDraggedBullet(null)
                                             }
-                                            className="mt-0.5 w-4 shrink-0 cursor-grab select-none text-center text-neutral-400"
+                                            className="mt-0.5 w-4 shrink-0 cursor-grab select-none text-center text-slate-300 hover:text-sky-500"
                                             title="Drag bullet"
                                           >
                                             ⋮⋮
@@ -812,18 +881,18 @@ export default function EditorPanel({
                                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs text-red-600 hover:bg-red-50"
                                             title="Delete bullet"
                                           >
-                                            🗑
+                                            <TrashIcon />
                                           </button>
                                         </div>
                                       );
                                     })}
 
-                                    <div className="group mt-2 flex w-full min-w-0 items-start gap-2 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 px-2 py-1.5 text-sm text-neutral-500 focus-within:border-neutral-500 focus-within:bg-white">
-                                      <span className="mt-0.5 w-4 shrink-0 select-none text-center text-neutral-300">
+                                    <div className="group mt-2 flex w-full min-w-0 items-start gap-2 rounded-lg border border-dashed border-sky-200 bg-sky-50/50 px-2 py-1.5 text-sm text-slate-500 focus-within:border-sky-500 focus-within:bg-white">
+                                      <span className="mt-0.5 w-4 shrink-0 select-none text-center text-slate-300">
                                         ⋮⋮
                                       </span>
 
-                                      <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-sm border border-neutral-300 bg-white" />
+                                      <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-sm border border-sky-200 bg-white" />
 
                                       <input
                                         value={draftBullets[block.id] ?? ""}
@@ -843,7 +912,7 @@ export default function EditorPanel({
                                           submitDraftBullet(block.id)
                                         }
                                         placeholder="Add bullet point"
-                                        className="min-w-0 flex-1 bg-transparent italic outline-none placeholder:text-neutral-400 focus:not-italic"
+                                        className="min-w-0 flex-1 bg-transparent italic outline-none placeholder:text-slate-400 focus:not-italic"
                                       />
 
                                       <span className="h-6 w-6 shrink-0" />
@@ -855,21 +924,33 @@ export default function EditorPanel({
                           </div>
                         </div>
                       );
-                    })}
+                    }))}
 
-                    <button
-                      type="button"
-                      onClick={() => onAddBlock(section.id)}
-                      className="w-full rounded-xl border border-dashed border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-600 hover:border-neutral-500 hover:bg-neutral-50"
-                    >
-                      ＋ Add {section.label}
-                    </button>
+                    {!inlineBulletBlock && (
+                      <button
+                        type="button"
+                        onClick={() => onAddBlock(section.id)}
+                        className="w-full rounded-lg border border-dashed border-sky-200 bg-sky-50/60 px-3 py-2 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-50"
+                      >
+                        + Add {section.label}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
             </section>
           );
         })}
+
+        <div className="bg-white py-4">
+          <button
+            type="button"
+            onClick={() => setSectionModalOpen(true)}
+            className="w-full rounded-lg border border-dashed border-sky-200 bg-sky-50/60 px-3 py-2 text-xs font-semibold text-sky-700 hover:border-sky-400 hover:bg-sky-50"
+          >
+            + Add Section
+          </button>
+        </div>
       </div>
 
       {sectionModalOpen && (
@@ -882,6 +963,215 @@ export default function EditorPanel({
           onSave={submitSectionModal}
         />
       )}
+    </div>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M4.5 6h11" />
+      <path d="M8 6V4.5h4V6" />
+      <path d="M6.5 6.5 7.1 16h5.8l.6-9.5" />
+      <path d="M8.8 9v4.5" />
+      <path d="M11.2 9v4.5" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="m5 14.5-.5 2 2-.5 8.4-8.4-1.5-1.5L5 14.5Z" />
+      <path d="m12.4 5.1 1.5-1.5 2.5 2.5-1.5 1.5" />
+    </svg>
+  );
+}
+
+function LinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M8.5 11.5 11.5 8.5" />
+      <path d="M7.5 7.5 6.4 8.6a3 3 0 0 0 4.2 4.2l1.1-1.1" />
+      <path d="m12.5 12.5 1.1-1.1a3 3 0 0 0-4.2-4.2L8.3 8.3" />
+    </svg>
+  );
+}
+
+function LinkPresetButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block w-full rounded-md px-2 py-1.5 text-left font-medium text-slate-700 hover:bg-sky-50 hover:text-sky-700"
+    >
+      {label}
+    </button>
+  );
+}
+
+function isInlineBulletSection(
+  section: ResumeSectionDefinition,
+  sectionBlocks: ResumeBlock[],
+) {
+  return (
+    sectionBlocks.length === 1 &&
+    section.fields.bullets &&
+    !section.fields.subtitle &&
+    !section.fields.location &&
+    !section.fields.dates &&
+    !section.fields.gpa &&
+    !section.fields.stack
+  );
+}
+
+function InlineBulletList({
+  block,
+  selection,
+  orderedBullets,
+  draggedBullet,
+  draftValue,
+  onDraftChange,
+  onDraftSubmit,
+  onToggleBullet,
+  onUpdateBullet,
+  onDeleteBullet,
+  onDragBulletStart,
+  onDragBulletEnd,
+  onBulletDragOver,
+}: {
+  block: ResumeBlock;
+  selection: ResumeSelection;
+  orderedBullets: ResumeBlock["bullets"];
+  draggedBullet: {
+    blockId: string;
+    bulletId: string;
+  } | null;
+  draftValue: string;
+  onDraftChange: (value: string) => void;
+  onDraftSubmit: () => void;
+  onToggleBullet: (blockId: string, bulletId: string) => void;
+  onUpdateBullet: (blockId: string, bulletId: string, text: string) => void;
+  onDeleteBullet: (blockId: string, bulletId: string) => void;
+  onDragBulletStart: (bulletId: string) => void;
+  onDragBulletEnd: () => void;
+  onBulletDragOver: (
+    event: React.DragEvent<HTMLDivElement>,
+    blockId: string,
+    targetBulletId: string,
+    orderedBulletIds: string[],
+  ) => void;
+}) {
+  const orderedBulletIds = orderedBullets.map((bullet) => bullet.id);
+
+  return (
+    <div className="min-w-0 space-y-2">
+      {orderedBullets.map((bullet) => {
+        const bulletSelected = selection.selectedBulletIds.includes(bullet.id);
+        const isDragging = draggedBullet?.bulletId === bullet.id;
+
+        return (
+          <div
+            key={bullet.id}
+            onDragOver={(event) =>
+              onBulletDragOver(event, block.id, bullet.id, orderedBulletIds)
+            }
+            className={`flex w-full max-w-full min-w-0 items-start gap-2 overflow-hidden rounded-lg border px-2 py-1.5 text-sm text-slate-700 transition ${
+              isDragging
+                ? "border-sky-200 bg-sky-50 opacity-60"
+                : "border-transparent hover:border-sky-100 hover:bg-sky-50/50"
+            }`}
+          >
+            <span
+              draggable
+              onDragStart={() => onDragBulletStart(bullet.id)}
+              onDragEnd={onDragBulletEnd}
+              className="mt-0.5 w-4 shrink-0 cursor-grab select-none text-center text-slate-300 hover:text-sky-500"
+              title="Drag skill list"
+            >
+              ⋮⋮
+            </span>
+
+            <input
+              type="checkbox"
+              checked={bulletSelected}
+              onChange={() => onToggleBullet(block.id, bullet.id)}
+              className="mt-1 h-3.5 w-3.5 shrink-0"
+            />
+
+            <AutoGrowTextarea
+              value={bullet.text}
+              onChange={(value) => onUpdateBullet(block.id, bullet.id, value)}
+            />
+
+            <button
+              type="button"
+              onClick={() => onDeleteBullet(block.id, bullet.id)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs text-red-600 hover:bg-red-50"
+              title="Delete skill list"
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        );
+      })}
+
+      <div className="group mt-2 flex w-full min-w-0 items-start gap-2 rounded-lg border border-dashed border-sky-200 bg-sky-50/50 px-2 py-1.5 text-sm text-slate-500 focus-within:border-sky-500 focus-within:bg-white">
+        <span className="mt-0.5 w-4 shrink-0 select-none text-center text-slate-300">
+          ⋮⋮
+        </span>
+
+        <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded-sm border border-sky-200 bg-white" />
+
+        <input
+          value={draftValue}
+          onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onDraftSubmit();
+            }
+          }}
+          onBlur={onDraftSubmit}
+          placeholder="Add skill list"
+          className="min-w-0 flex-1 bg-transparent italic outline-none placeholder:text-slate-400 focus:not-italic"
+        />
+
+        <span className="h-6 w-6 shrink-0" />
+      </div>
     </div>
   );
 }
@@ -912,11 +1202,11 @@ function AddSectionModal({
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-4 shadow-2xl">
+      <div className="w-full max-w-md rounded-xl border border-sky-100 bg-white p-4 shadow-2xl shadow-sky-950/10">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">Add Section</h3>
-            <p className="mt-1 text-sm text-neutral-500">
+            <p className="mt-1 text-sm text-slate-500">
               New sections are added to the active document only.
             </p>
           </div>
@@ -924,7 +1214,7 @@ function AddSectionModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg px-2 py-1 text-sm text-neutral-500 hover:bg-neutral-100"
+            className="rounded-lg px-2 py-1 text-sm text-slate-500 hover:bg-sky-50"
             aria-label="Close add section modal"
           >
             ×
@@ -932,7 +1222,7 @@ function AddSectionModal({
         </div>
 
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
             Section name
           </span>
           <input
@@ -943,7 +1233,7 @@ function AddSectionModal({
               if (event.key === "Escape") onCancel();
             }}
             autoFocus
-            className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-neutral-900"
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-sky-500"
           />
         </label>
 
@@ -990,7 +1280,7 @@ function AddSectionModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-xl border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-100"
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50"
           >
             Cancel
           </button>
@@ -999,7 +1289,7 @@ function AddSectionModal({
             type="button"
             onClick={onSave}
             disabled={!name.trim()}
-            className="rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Save Section
           </button>
@@ -1022,8 +1312,8 @@ function CheckboxControl({
 }) {
   return (
     <label
-      className={`flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-2 text-sm font-medium ${
-        disabled ? "bg-neutral-50 text-neutral-400" : "bg-white text-neutral-800"
+      className={`flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium ${
+        disabled ? "bg-slate-50 text-slate-400" : "bg-white text-slate-800"
       }`}
     >
       <span>{label}</span>
@@ -1051,7 +1341,7 @@ function FieldInput({
 }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-neutral-500">
+      <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
         {label}
       </span>
 
@@ -1060,7 +1350,7 @@ function FieldInput({
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => handleInlineFormatShortcut(event, value, onChange)}
-        className="w-full min-w-0 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-neutral-500"
+        className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm outline-none focus:border-sky-500"
       />
     </label>
   );
@@ -1108,7 +1398,7 @@ function AutoGrowTextarea({
       onKeyDown={(event) => handleInlineFormatShortcut(event, value, onChange)}
       rows={1}
       wrap="soft"
-      className="block min-h-4.5 w-full min-w-0 max-w-full flex-1 resize-none overflow-hidden overflow-x-hidden whitespace-pre-wrap break-words rounded-md bg-transparent px-1 py-0 leading-snug outline-none focus:bg-white focus:ring-1 focus:ring-neutral-300"
+      className="block min-h-4.5 w-full min-w-0 max-w-full flex-1 resize-none overflow-hidden overflow-x-hidden whitespace-pre-wrap break-words rounded-md bg-transparent px-1 py-0 leading-snug outline-none focus:bg-white focus:ring-1 focus:ring-sky-200"
       style={{
         wordBreak: "break-word",
         overflowWrap: "anywhere",

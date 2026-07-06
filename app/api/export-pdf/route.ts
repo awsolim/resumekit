@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
 import type {
   PageSize,
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "Invalid PDF export payload." }, { status: 400 });
     }
 
-    const executablePath = findBrowserExecutable();
+    const executablePath = await findBrowserExecutable();
     if (!executablePath) {
       return Response.json(
         {
@@ -60,7 +61,11 @@ export async function POST(request: Request) {
     browser = await puppeteer.launch({
       executablePath,
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        ...chromium.args,
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+      ],
     });
 
     const pdfPage = await browser.newPage();
@@ -104,7 +109,7 @@ export async function POST(request: Request) {
   }
 }
 
-function findBrowserExecutable() {
+async function findBrowserExecutable() {
   const candidates = [
     process.env.PUPPETEER_EXECUTABLE_PATH,
     process.env.CHROME_PATH,
@@ -114,13 +119,21 @@ function findBrowserExecutable() {
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   ].filter(Boolean) as string[];
 
-  return candidates.find((candidate) => {
+  const localExecutable = candidates.find((candidate) => {
     try {
       return Boolean(candidate && existsSync(candidate));
     } catch {
       return false;
     }
   });
+
+  if (localExecutable) return localExecutable;
+
+  try {
+    return await chromium.executablePath();
+  } catch {
+    return null;
+  }
 }
 
 function createExportHtml(resumeMarkup: string, width: string, height: string) {

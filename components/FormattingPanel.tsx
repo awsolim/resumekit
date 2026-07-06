@@ -83,32 +83,32 @@ export default function FormattingPanel({
 
   return (
     <section>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">Formatting</h2>
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold">Formatting</h2>
 
         <button
           type="button"
           onClick={onReset}
-          className="rounded-xl border border-neutral-300 px-3 py-1.5 text-xs font-semibold hover:bg-neutral-100"
+          className="rounded-full border border-sky-200 px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50"
         >
           Reset
         </button>
       </div>
 
-      <div className="space-y-5">
-        <div className="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-          <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+      <div className="divide-y divide-slate-200 border-y border-slate-200">
+        <div className="space-y-4 py-4">
+          <h3 className="text-sm font-semibold text-slate-950">
             Page
           </h3>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
               Page size
             </span>
             <select
               value={pageSize}
               onChange={(event) => onPageSizeChange(event.target.value as PageSize)}
-              className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-neutral-900"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-sky-500"
             >
               <option value="letter">Letter</option>
               <option value="a4">A4</option>
@@ -116,7 +116,7 @@ export default function FormattingPanel({
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
               Base font family
             </span>
             <select
@@ -124,7 +124,7 @@ export default function FormattingPanel({
               onChange={(event) =>
                 updateFormatting("fontFamily", event.target.value)
               }
-              className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-neutral-900"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-sky-500"
             >
               {fontOptions.map((font) => (
                 <option key={font} value={font}>
@@ -175,8 +175,8 @@ export default function FormattingPanel({
           />
         </div>
 
-        <div className="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
-          <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-neutral-500">
+        <div className="space-y-3 py-4">
+          <h3 className="text-sm font-semibold text-slate-950">
             Text Styles
           </h3>
 
@@ -186,7 +186,7 @@ export default function FormattingPanel({
             return (
               <div
                 key={key}
-                className="rounded-xl border border-neutral-200 bg-white p-3"
+                className="border-l-2 border-slate-100 bg-white py-2 pl-3"
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <h4 className="text-sm font-semibold">
@@ -203,8 +203,8 @@ export default function FormattingPanel({
                       }
                       className={`rounded-lg px-2 py-1 text-xs font-bold ${
                         style.bold
-                          ? "bg-neutral-950 text-white"
-                          : "bg-neutral-100 text-neutral-700"
+                          ? "bg-sky-600 text-white"
+                          : "bg-sky-50 text-sky-700"
                       }`}
                     >
                       B
@@ -219,8 +219,8 @@ export default function FormattingPanel({
                       }
                       className={`rounded-lg px-2 py-1 text-xs italic ${
                         style.italic
-                          ? "bg-neutral-950 text-white"
-                          : "bg-neutral-100 text-neutral-700"
+                          ? "bg-sky-600 text-white"
+                          : "bg-sky-50 text-sky-700"
                       }`}
                     >
                       I
@@ -229,7 +229,7 @@ export default function FormattingPanel({
                 </div>
 
                 <label className="mb-2 block">
-                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Font family
                   </span>
                   <select
@@ -239,7 +239,7 @@ export default function FormattingPanel({
                         fontFamily: event.target.value,
                       })
                     }
-                    className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-neutral-900"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-sky-500"
                   >
                     <option value="">Use base</option>
                     {fontOptions.map((font) => (
@@ -294,11 +294,11 @@ function SliderControl({
   return (
     <label className="block">
       <span className="mb-1 flex items-center justify-between gap-3">
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           {label}
         </span>
 
-        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-700">
+        <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-semibold text-sky-700">
           {value}
           {suffix}
         </span>

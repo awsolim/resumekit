@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import type { User } from "firebase/auth";
 import type {
   PageSize,
   ResumeBlock,
@@ -13,12 +15,17 @@ import type {
 } from "@/types/resume";
 import ControlPanel from "@/components/ControlPanel";
 import ResumePreview from "@/components/ResumePreview";
+import { firebaseAuth, googleAuthProvider } from "@/lib/firebase";
+import {
+  loadResumeState,
+  saveResumeState,
+} from "@/lib/firebase-resume-store";
 import {
   cloneFormatting,
+  createBlankDocument,
   createBulletId,
   createEmptyBlock,
   createInitialState,
-  createNewDocument,
   createSectionDefinition,
   defaultFormatting,
   duplicateBlock,
@@ -27,6 +34,8 @@ import {
   readStoredState,
   STORAGE_KEY,
 } from "@/lib/resume-utils";
+
+type SaveStatus = "idle" | "local" | "loading" | "saving" | "saved" | "error";
 
 function moveId(order: string[], draggedId: string, targetIndex: number) {
   const draggedIndex = order.indexOf(draggedId);
@@ -47,6 +56,62 @@ function moveId(order: string[], draggedId: string, targetIndex: number) {
   return nextOrder;
 }
 
+function getOrderedSections(document: ResumeDocument) {
+  const sectionMap = new Map(
+    document.sections.map((section) => [section.id, section]),
+  );
+
+  return document.sectionOrder
+    .map((sectionId) => sectionMap.get(sectionId))
+    .filter(isDefined);
+}
+
+function getSelectedBlocks(
+  document: ResumeDocument,
+  orderedSections: ReturnType<typeof getOrderedSections>,
+) {
+  const blockMap = new Map(document.blocks.map((block) => [block.id, block]));
+
+  const orderedBlocks = orderedSections.flatMap((section) => {
+    const sectionBlockIds =
+      document.blockOrder[section.id] ??
+      document.blocks
+        .filter((block) => block.section === section.id)
+        .map((block) => block.id);
+
+    return sectionBlockIds
+      .map((blockId) => blockMap.get(blockId))
+      .filter(isDefined);
+  });
+
+  return orderedBlocks
+    .filter((block) => document.selection.selectedBlockIds.includes(block.id))
+    .map((block) => {
+      const orderedBulletIds =
+        document.bulletOrder[block.id] ?? block.bullets.map((bullet) => bullet.id);
+
+      const orderedBullets = orderedBulletIds
+        .map((bulletId) => block.bullets.find((bullet) => bullet.id === bulletId))
+        .filter(isDefined);
+
+      return {
+        ...block,
+        bullets: orderedBullets.filter((bullet) =>
+          document.selection.selectedBulletIds.includes(bullet.id),
+        ),
+      };
+    });
+}
+
+function getSelectedHeader(document: ResumeDocument) {
+  return {
+    ...document.header,
+    contactItems: document.header.contactItems.filter((item) =>
+      document.selection.selectedContactItemIds.includes(item.id),
+    ),
+  };
+}
+
 export default function ResumeBuilder() {
   const initialState = useMemo(() => createInitialState(), []);
 
@@ -56,105 +121,81 @@ export default function ResumeBuilder() {
   const [activeDocumentId, setActiveDocumentId] = useState(
     initialState.activeDocumentId,
   );
-  const [documentMenuOpen, setDocumentMenuOpen] = useState(false);
-  const [renameValue, setRenameValue] = useState(
-    initialState.documents[0].documentName,
-  );
-  const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
 
   const activeDocument =
     documents.find((document) => document.id === activeDocumentId) ?? documents[0];
 
-  const orderedSections = useMemo(() => {
-    const sectionMap = new Map(
-      activeDocument.sections.map((section) => [section.id, section]),
-    );
+  const orderedSections = useMemo(
+    () => getOrderedSections(activeDocument),
+    [activeDocument],
+  );
 
-    return activeDocument.sectionOrder
-      .map((sectionId) => sectionMap.get(sectionId))
-      .filter(isDefined);
-  }, [activeDocument]);
-
-  const orderedBlocks = useMemo(() => {
-    const blockMap = new Map(
-      activeDocument.blocks.map((block) => [block.id, block]),
-    );
-
-    return orderedSections.flatMap((section) => {
-      const sectionBlockIds =
-        activeDocument.blockOrder[section.id] ??
-        activeDocument.blocks
-          .filter((block) => block.section === section.id)
-          .map((block) => block.id);
-
-      return sectionBlockIds
-        .map((blockId) => blockMap.get(blockId))
-        .filter(isDefined);
-    });
-  }, [activeDocument, orderedSections]);
-
-  const selectedBlocks = useMemo(() => {
-    return orderedBlocks
-      .filter((block) => activeDocument.selection.selectedBlockIds.includes(block.id))
-      .map((block) => {
-        const orderedBulletIds =
-          activeDocument.bulletOrder[block.id] ??
-          block.bullets.map((bullet) => bullet.id);
-
-        const orderedBullets = orderedBulletIds
-          .map((bulletId) => block.bullets.find((bullet) => bullet.id === bulletId))
-          .filter(isDefined);
-
-        return {
-          ...block,
-          bullets: orderedBullets.filter((bullet) =>
-            activeDocument.selection.selectedBulletIds.includes(bullet.id),
-          ),
-        };
-      });
-  }, [orderedBlocks, activeDocument]);
+  const selectedBlocks = useMemo(
+    () => getSelectedBlocks(activeDocument, orderedSections),
+    [activeDocument, orderedSections],
+  );
 
   const selectedHeader = useMemo(
-    () => ({
-      ...activeDocument.header,
-      contactItems: activeDocument.header.contactItems.filter((item) =>
-        activeDocument.selection.selectedContactItemIds.includes(item.id),
-      ),
-    }),
+    () => getSelectedHeader(activeDocument),
     [activeDocument],
   );
 
   useEffect(() => {
-    let cancelled = false;
+    const storedState = readStoredState();
 
-    queueMicrotask(() => {
-      if (cancelled) return;
-
-      const storedState = readStoredState();
-
-      if (storedState) {
+    if (storedState) {
+      queueMicrotask(() => {
         setDocuments(storedState.documents);
         setActiveDocumentId(storedState.activeDocumentId);
+      });
+    }
 
-        const storedActiveDocument =
-          storedState.documents.find(
-            (document) => document.id === storedState.activeDocumentId,
-          ) ?? storedState.documents[0];
+    const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      setAuthUser(user);
+      setAuthReady(true);
+      setAuthError("");
 
-        setRenameValue(storedActiveDocument.documentName);
+      if (!user) {
+        setCloudReady(false);
+        setIsCloudLoading(false);
+        setSaveStatus("local");
+        return;
       }
 
-      setHasLoadedStorage(true);
+      setCloudReady(false);
+      setIsCloudLoading(true);
+      setSaveStatus("loading");
+
+      try {
+        const cloudState = await loadResumeState(user.uid);
+        setDocuments(cloudState.documents);
+        setActiveDocumentId(cloudState.activeDocumentId);
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudState));
+        setCloudReady(true);
+        setSaveStatus("saved");
+      } catch (error) {
+        console.error(error);
+        setAuthError(
+          "Could not load your cloud resumes. Check Firebase Auth, Firestore, and rules.",
+        );
+        setSaveStatus("error");
+      } finally {
+        setIsCloudLoading(false);
+      }
     });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedStorage) return;
+    if (!authReady) return;
 
     const stateToStore: ResumeKitState = {
       documents,
@@ -162,7 +203,58 @@ export default function ResumeBuilder() {
     };
 
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToStore));
-  }, [documents, activeDocumentId, hasLoadedStorage]);
+
+    if (!authUser) {
+      queueMicrotask(() => setSaveStatus("local"));
+      return;
+    }
+
+    if (!cloudReady || isCloudLoading) return;
+
+    queueMicrotask(() => setSaveStatus("saving"));
+
+    const saveTimeout = window.setTimeout(() => {
+      saveResumeState(authUser.uid, stateToStore)
+        .then(() => setSaveStatus("saved"))
+        .catch((error) => {
+          console.error(error);
+          setSaveStatus("error");
+        });
+    }, 900);
+
+    return () => window.clearTimeout(saveTimeout);
+  }, [
+    documents,
+    activeDocumentId,
+    authReady,
+    authUser,
+    cloudReady,
+    isCloudLoading,
+  ]);
+
+  async function signInWithGoogle() {
+    setAuthError("");
+
+    try {
+      await signInWithPopup(firebaseAuth, googleAuthProvider);
+    } catch (error) {
+      if (isDismissedAuthPopup(error)) return;
+
+      console.error(error);
+      setAuthError("Sign in failed. Check your Firebase authorized domains.");
+    }
+  }
+
+  async function signOutUser() {
+    setAuthError("");
+
+    try {
+      await signOut(firebaseAuth);
+    } catch (error) {
+      console.error(error);
+      setAuthError("Sign out failed. Please try again.");
+    }
+  }
 
   function updateActiveDocument(updater: (document: ResumeDocument) => ResumeDocument) {
     setDocuments((current) =>
@@ -177,51 +269,51 @@ export default function ResumeBuilder() {
     if (!nextDocument) return;
 
     setActiveDocumentId(documentId);
-    setRenameValue(nextDocument.documentName);
-    setDocumentMenuOpen(false);
   }
 
-  function renameActiveDocument() {
-    const cleanName = renameValue.trim();
+  function renameDocument(documentId: string, name: string) {
+    const cleanName = name.trim();
     if (!cleanName) return;
 
-    updateActiveDocument((document) => ({
-      ...document,
-      documentName: cleanName,
-    }));
+    setDocuments((current) =>
+      current.map((document) =>
+        document.id === documentId
+          ? {
+              ...document,
+              documentName: cleanName,
+            }
+          : document,
+      ),
+    );
 
-    setDocumentMenuOpen(false);
   }
 
   function createDocument() {
-    const newDocument = createNewDocument("Untitled Resume");
-
+    const newDocument = createBlankDocument("Untitled Resume");
     setDocuments((current) => [...current, newDocument]);
     setActiveDocumentId(newDocument.id);
-    setRenameValue(newDocument.documentName);
-    setDocumentMenuOpen(false);
   }
 
-  function duplicateActiveDocument() {
-    const newDocument = duplicateDocument(activeDocument);
+  function duplicateExistingDocument(documentId: string) {
+    const documentToDuplicate = documents.find(
+      (document) => document.id === documentId,
+    );
+    if (!documentToDuplicate) return;
 
+    const newDocument = duplicateDocument(documentToDuplicate);
     setDocuments((current) => [...current, newDocument]);
     setActiveDocumentId(newDocument.id);
-    setRenameValue(newDocument.documentName);
-    setDocumentMenuOpen(false);
   }
 
-  function deleteActiveDocument() {
+  function deleteDocument(documentId: string) {
     if (documents.length <= 1) return;
 
-    const remainingDocuments = documents.filter(
-      (document) => document.id !== activeDocument.id,
-    );
+    const remainingDocuments = documents.filter((document) => document.id !== documentId);
+    const nextActiveDocument =
+      documentId === activeDocument.id ? remainingDocuments[0] : activeDocument;
 
     setDocuments(remainingDocuments);
-    setActiveDocumentId(remainingDocuments[0].id);
-    setRenameValue(remainingDocuments[0].documentName);
-    setDocumentMenuOpen(false);
+    setActiveDocumentId(nextActiveDocument.id);
   }
 
   function updatePageSize(pageSize: PageSize) {
@@ -656,33 +748,13 @@ export default function ResumeBuilder() {
     });
   }
 
-  function resetPrototypeData() {
-    const confirmed = window.confirm(
-      "Reset ResumeKit prototype data? This will restore the default documents, sections, and content.",
-    );
+  async function downloadPdf(documentId = activeDocument.id) {
+    const documentToExport =
+      documents.find((document) => document.id === documentId) ?? activeDocument;
+    const exportSections = getOrderedSections(documentToExport);
+    const exportBlocks = getSelectedBlocks(documentToExport, exportSections);
+    const exportHeader = getSelectedHeader(documentToExport);
 
-    if (!confirmed) return;
-
-    const freshState = createInitialState();
-
-    setDocuments(freshState.documents);
-    setActiveDocumentId(freshState.activeDocumentId);
-    setRenameValue(freshState.documents[0].documentName);
-    setDocumentMenuOpen(false);
-    window.localStorage.removeItem(STORAGE_KEY);
-  }
-
-  function printActiveDocument() {
-    // Browser print headers/footers are controlled by Chrome's print dialog.
-    // The /print route removes the app UI and page chrome from our side.
-    window.localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({ documents, activeDocumentId } satisfies ResumeKitState),
-    );
-    window.open("/print", "_blank");
-  }
-
-  async function downloadPdf() {
     setIsGeneratingPdf(true);
 
     try {
@@ -692,12 +764,12 @@ export default function ResumeBuilder() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          documentName: activeDocument.documentName,
-          header: selectedHeader,
-          pageSize: activeDocument.pageSize,
-          sectionDefinitions: orderedSections,
-          blocks: selectedBlocks,
-          formatting: activeDocument.formatting,
+          documentName: documentToExport.documentName,
+          header: exportHeader,
+          pageSize: documentToExport.pageSize,
+          sectionDefinitions: exportSections,
+          blocks: exportBlocks,
+          formatting: documentToExport.formatting,
         }),
       });
 
@@ -712,7 +784,7 @@ export default function ResumeBuilder() {
       const objectUrl = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = `${sanitizeFileName(activeDocument.documentName)}.pdf`;
+      link.download = `${sanitizeFileName(documentToExport.documentName)}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -720,7 +792,7 @@ export default function ResumeBuilder() {
     } catch (error) {
       console.error(error);
       window.alert(
-        "PDF export failed. You can still use Print / Save PDF as a fallback.",
+        "PDF export failed. Please try again after checking the document content.",
       );
     } finally {
       setIsGeneratingPdf(false);
@@ -728,144 +800,71 @@ export default function ResumeBuilder() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-100 p-4 text-neutral-950 md:p-6 print:bg-white print:p-0">
-      <div className="mx-auto max-w-7xl print:max-w-none">
-        <header className="mb-6 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm print:hidden">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setDocumentMenuOpen((current) => !current)}
-                className="group flex items-center gap-3 rounded-xl px-1 py-1 text-left hover:bg-neutral-50"
+    <main className="min-h-screen bg-white text-slate-950 print:bg-white print:p-0">
+      <div className="mx-auto max-w-[1500px] print:max-w-none">
+        <header className="border-b border-slate-200 bg-white px-5 py-4 print:hidden lg:px-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">
+              ResumeKit
+            </span>
+            <span className="mt-1 block text-3xl font-bold tracking-tight">
+              {activeDocument.documentName}
+            </span>
+          </div>
+
+          <div className="flex flex-col items-start gap-2 lg:items-end">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  saveStatus === "error"
+                    ? "bg-red-50 text-red-700"
+                    : authUser
+                      ? "bg-sky-50 text-sky-700"
+                      : "bg-slate-100 text-slate-600"
+                }`}
               >
-                <span>
-                  <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-neutral-500">
-                    ResumeKit
-                  </span>
-                  <span className="mt-1 block text-3xl font-bold tracking-tight">
-                    {activeDocument.documentName}
-                  </span>
-                </span>
+                {statusLabel(saveStatus, authUser)}
+              </span>
 
-                <span className="mt-6 text-lg text-neutral-500 group-hover:text-neutral-900">
-                  {documentMenuOpen ? "▴" : "▾"}
-                </span>
-              </button>
-
-              {documentMenuOpen && (
-                <div className="absolute z-20 mt-3 w-96 rounded-2xl border border-neutral-200 bg-white p-3 shadow-xl">
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-500">
-                        Documents
-                      </p>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={createDocument}
-                          className="rounded-lg px-2 py-1 text-sm hover:bg-neutral-100"
-                          title="Create new document"
-                        >
-                          ＋
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={duplicateActiveDocument}
-                          className="rounded-lg px-2 py-1 text-sm hover:bg-neutral-100"
-                          title="Duplicate active document"
-                        >
-                          ⧉
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 space-y-1">
-                      {documents.map((document) => (
-                        <button
-                          key={document.id}
-                          type="button"
-                          onClick={() => switchDocument(document.id)}
-                          className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium ${
-                            document.id === activeDocument.id
-                              ? "bg-neutral-950 text-white"
-                              : "hover:bg-neutral-100"
-                          }`}
-                        >
-                          {document.documentName}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-neutral-200 pt-3">
-                    <label className="block">
-                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                        Rename active document
-                      </span>
-                      <input
-                        value={renameValue}
-                        onChange={(event) => setRenameValue(event.target.value)}
-                        className="w-full rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm font-medium outline-none focus:border-neutral-900"
-                      />
-                    </label>
-
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={renameActiveDocument}
-                        className="flex-1 rounded-xl bg-neutral-950 px-3 py-2 text-sm font-semibold text-white hover:bg-neutral-800"
-                      >
-                        Rename
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={deleteActiveDocument}
-                        disabled={documents.length <= 1}
-                        className="rounded-xl border border-red-200 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        title="Delete active document"
-                      >
-                        🗑
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={resetPrototypeData}
-                      className="mt-3 w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm font-semibold text-neutral-700 hover:bg-neutral-100"
-                    >
-                      Reset prototype data
-                    </button>
-                  </div>
-                </div>
+              {authUser ? (
+                <button
+                  type="button"
+                  onClick={signOutUser}
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50"
+                >
+                  Sign Out
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={signInWithGoogle}
+                  disabled={!authReady}
+                  className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Sign In With Google
+                </button>
               )}
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={downloadPdf}
-                disabled={isGeneratingPdf}
-                className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isGeneratingPdf ? "Generating..." : "Download PDF"}
-              </button>
+            {authUser && (
+              <span className="max-w-[280px] truncate text-xs text-slate-500">
+                {authUser.email ?? authUser.displayName}
+              </span>
+            )}
 
-              <button
-                type="button"
-                onClick={printActiveDocument}
-                className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold text-neutral-800 shadow-sm hover:bg-neutral-50"
-              >
-                Print / Save PDF
-              </button>
-            </div>
+            {authError && (
+              <p className="max-w-md text-sm text-red-600">{authError}</p>
+            )}
+          </div>
           </div>
         </header>
 
-        <div className="grid items-start gap-6 lg:grid-cols-[420px_1fr] print:block">
+        <div className="grid items-start lg:grid-cols-[500px_minmax(0,1fr)] print:block">
           <ControlPanel
+            documents={documents}
+            activeDocumentId={activeDocument.id}
+            isGeneratingPdf={isGeneratingPdf}
             blocks={activeDocument.blocks}
             header={activeDocument.header}
             sectionDefinitions={orderedSections}
@@ -894,6 +893,12 @@ export default function ResumeBuilder() {
             onDeleteBullet={deleteBullet}
             onFormattingChange={updateFormatting}
             onFormattingReset={resetFormatting}
+            onSwitchDocument={switchDocument}
+            onRenameSpecificDocument={renameDocument}
+            onCreateDocument={createDocument}
+            onDuplicateSpecificDocument={duplicateExistingDocument}
+            onDeleteSpecificDocument={deleteDocument}
+            onDownloadPdf={downloadPdf}
           />
 
           <ResumePreview
@@ -909,6 +914,28 @@ export default function ResumeBuilder() {
         </div>
       </div>
     </main>
+  );
+}
+
+function statusLabel(status: SaveStatus, user: User | null) {
+  if (!user) return "Saved on this device";
+
+  if (status === "loading") return "Loading cloud resumes";
+  if (status === "saving") return "Saving";
+  if (status === "saved") return "Saved to cloud";
+  if (status === "error") return "Cloud save issue";
+
+  return "Signed in";
+}
+
+function isDismissedAuthPopup(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+
+  const code = "code" in error ? String(error.code) : "";
+
+  return (
+    code === "auth/cancelled-popup-request" ||
+    code === "auth/popup-closed-by-user"
   );
 }
 

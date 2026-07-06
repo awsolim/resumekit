@@ -114,6 +114,11 @@ export const defaultResumeHeader: ResumeHeader = {
   ],
 };
 
+export const blankResumeHeader: ResumeHeader = {
+  name: "",
+  contactItems: [],
+};
+
 export const defaultSectionDefinitions: ResumeSectionDefinition[] = [
   {
     id: "education",
@@ -416,6 +421,37 @@ export function createNewDocument(name = "Untitled Resume"): ResumeDocument {
   };
 }
 
+export function createBlankDocument(name = "Untitled Resume"): ResumeDocument {
+  const sections = cloneSections(defaultSectionDefinitions);
+
+  return {
+    id: createDocumentId(),
+    documentName: name,
+    pageSize: "letter",
+    header: cloneHeader(blankResumeHeader),
+    sections,
+    blocks: [],
+    selection: {
+      selectedContactItemIds: [],
+      selectedBlockIds: [],
+      selectedBulletIds: [],
+    },
+    sectionOrder: getDefaultSectionOrder(sections),
+    blockOrder: Object.fromEntries(sections.map((section) => [section.id, []])),
+    bulletOrder: {},
+    formatting: cloneFormatting(defaultFormatting),
+  };
+}
+
+export function createEmptyUserState(): ResumeKitState {
+  const document = createBlankDocument();
+
+  return {
+    documents: [document],
+    activeDocumentId: document.id,
+  };
+}
+
 export function duplicateDocument(document: ResumeDocument): ResumeDocument {
   return {
     ...document,
@@ -550,7 +586,7 @@ function normalizeHeader(header?: Partial<ResumeHeader>): ResumeHeader {
     : cloneHeader(defaultResumeHeader).contactItems;
 
   return {
-    name: header.name?.trim() ? header.name : defaultResumeHeader.name,
+    name: typeof header.name === "string" ? header.name : defaultResumeHeader.name,
     contactItems,
   };
 }

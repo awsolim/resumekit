@@ -47,7 +47,7 @@ body {
   min-height: var(--resume-page-height);
   overflow: hidden;
   width: var(--resume-page-width);
-  box-shadow: 0 20px 40px rgb(0 0 0 / 0.18);
+  box-shadow: 0 22px 50px rgb(15 23 42 / 0.14);
 }
 
 .print-shell {
