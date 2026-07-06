@@ -36,6 +36,8 @@ type EditorPanelProps = {
     targetIndex: number,
   ) => void;
   onAddSection: (label: string, fields: SectionFieldConfig) => void;
+  onRenameSection: (section: SectionId, label: string) => void;
+  onDuplicateSection: (section: SectionId) => void;
   onDeleteSection: (section: SectionId) => void;
   onAddBlock: (section: SectionId) => void;
   onUpdateBlock: (blockId: string, updates: Partial<ResumeBlock>) => void;
@@ -44,6 +46,15 @@ type EditorPanelProps = {
   onAddBullet: (blockId: string, text: string) => void;
   onUpdateBullet: (blockId: string, bulletId: string, text: string) => void;
   onDeleteBullet: (blockId: string, bulletId: string) => void;
+  onRequestDangerousAction: (action: DangerousActionConfig) => void;
+};
+
+type DangerousActionConfig = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  completedMessage?: string;
+  onConfirm: () => void;
 };
 
 function isDefined<T>(value: T | undefined): value is T {
@@ -87,6 +98,8 @@ export default function EditorPanel({
   onReorderBlock,
   onReorderBullet,
   onAddSection,
+  onRenameSection,
+  onDuplicateSection,
   onDeleteSection,
   onAddBlock,
   onUpdateBlock,
@@ -95,6 +108,7 @@ export default function EditorPanel({
   onAddBullet,
   onUpdateBullet,
   onDeleteBullet,
+  onRequestDangerousAction,
 }: EditorPanelProps) {
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() =>
     sectionDefinitions.map((section) => section.id),
@@ -114,6 +128,9 @@ export default function EditorPanel({
     bulletId: string;
   } | null>(null);
   const [linkMenuItemId, setLinkMenuItemId] = useState<string | null>(null);
+  const [openSectionMenuId, setOpenSectionMenuId] = useState<string | null>(null);
+  const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
+  const [sectionRenameValue, setSectionRenameValue] = useState("");
   const [draftBullets, setDraftBullets] = useState<Record<string, string>>({});
   const [sectionModalOpen, setSectionModalOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState("");
@@ -172,10 +189,40 @@ export default function EditorPanel({
   }
 
   function deleteContactItem(itemId: string) {
-    onHeaderChange({
-      ...header,
-      contactItems: header.contactItems.filter((item) => item.id !== itemId),
+    onRequestDangerousAction({
+      title: "Delete display text?",
+      message: "Are you sure you want to delete this display text line?",
+      confirmLabel: "Delete",
+      completedMessage: "Display text deleted.",
+      onConfirm: () => {
+        onHeaderChange({
+          ...header,
+          contactItems: header.contactItems.filter((item) => item.id !== itemId),
+        });
+      },
     });
+  }
+
+  function startSectionRename(section: ResumeSectionDefinition) {
+    setRenamingSectionId(section.id);
+    setSectionRenameValue(section.label);
+    setOpenSectionMenuId(null);
+  }
+
+  function saveSectionRename() {
+    if (!renamingSectionId) return;
+
+    const cleanLabel = sectionRenameValue.trim();
+    if (!cleanLabel) return;
+
+    onRenameSection(renamingSectionId, cleanLabel);
+    setRenamingSectionId(null);
+    setSectionRenameValue("");
+  }
+
+  function cancelSectionRename() {
+    setRenamingSectionId(null);
+    setSectionRenameValue("");
   }
 
   function applyContactLinkPreset(
@@ -504,6 +551,7 @@ export default function EditorPanel({
             selection.selectedBlockIds.includes(block.id),
           ).length;
           const isSectionDragging = draggedSectionId === section.id;
+          const isSectionRenaming = renamingSectionId === section.id;
 
           return (
             <section
@@ -524,27 +572,93 @@ export default function EditorPanel({
                   ⋮⋮
                 </span>
 
-                <button
-                  type="button"
-                  onClick={() => toggleSectionCollapse(section.id)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <span className="block truncate text-sm font-semibold text-slate-950">
-                    {section.label}
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    {selectedCount} of {sectionBlocks.length} blocks selected
-                  </span>
-                </button>
+                {isSectionRenaming ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <input
+                      value={sectionRenameValue}
+                      onChange={(event) =>
+                        setSectionRenameValue(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") saveSectionRename();
+                        if (event.key === "Escape") cancelSectionRename();
+                      }}
+                      autoFocus
+                      className="min-w-0 flex-1 rounded-lg border border-sky-200 bg-white px-2 py-1.5 text-sm font-semibold text-slate-950 outline-none focus:border-sky-500"
+                    />
 
-                <button
-                  type="button"
-                  onClick={() => onDeleteSection(section.id)}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-red-600 hover:bg-red-50"
-                  title="Delete section from this document"
-                >
-                  <TrashIcon />
-                </button>
+                    <button
+                      type="button"
+                      onClick={saveSectionRename}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sky-700 hover:bg-sky-50"
+                      aria-label="Save section name"
+                    >
+                      <CheckIcon />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={cancelSectionRename}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-sky-50"
+                      aria-label="Cancel section rename"
+                    >
+                      <CloseIcon />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggleSectionCollapse(section.id)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-sm font-semibold text-slate-950">
+                      {section.label}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {selectedCount} of {sectionBlocks.length} blocks selected
+                    </span>
+                  </button>
+                )}
+
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenSectionMenuId((current) =>
+                        current === section.id ? null : section.id,
+                      )
+                    }
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-sky-50 hover:text-sky-700"
+                    title={`${section.label} options`}
+                    aria-label={`${section.label} options`}
+                  >
+                    <DotsIcon />
+                  </button>
+
+                  {openSectionMenuId === section.id && (
+                    <div className="absolute right-0 z-20 mt-2 w-36 rounded-lg border border-sky-100 bg-white p-1 text-sm shadow-xl shadow-sky-950/10">
+                      <MenuItemButton
+                        label="Rename"
+                        onClick={() => startSectionRename(section)}
+                      />
+                      <MenuItemButton
+                        label="Duplicate"
+                        onClick={() => {
+                          onDuplicateSection(section.id);
+                          setOpenSectionMenuId(null);
+                        }}
+                      />
+                      <MenuItemButton
+                        label="Delete"
+                        danger
+                        onClick={() => {
+                          onDeleteSection(section.id);
+                          setOpenSectionMenuId(null);
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
 
                 <button
                   type="button"
@@ -988,6 +1102,21 @@ function TrashIcon() {
   );
 }
 
+function DotsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="currentColor"
+    >
+      <circle cx="5" cy="10" r="1.3" />
+      <circle cx="10" cy="10" r="1.3" />
+      <circle cx="15" cy="10" r="1.3" />
+    </svg>
+  );
+}
+
 function EditIcon() {
   return (
     <svg
@@ -1002,6 +1131,41 @@ function EditIcon() {
     >
       <path d="m5 14.5-.5 2 2-.5 8.4-8.4-1.5-1.5L5 14.5Z" />
       <path d="m12.4 5.1 1.5-1.5 2.5 2.5-1.5 1.5" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="m4.5 10.5 3.5 3.4 7.5-8" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="m6 6 8 8" />
+      <path d="m14 6-8 8" />
     </svg>
   );
 }
@@ -1022,6 +1186,30 @@ function LinkIcon() {
       <path d="M7.5 7.5 6.4 8.6a3 3 0 0 0 4.2 4.2l1.1-1.1" />
       <path d="m12.5 12.5 1.1-1.1a3 3 0 0 0-4.2-4.2L8.3 8.3" />
     </svg>
+  );
+}
+
+function MenuItemButton({
+  label,
+  danger,
+  onClick,
+}: {
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`block w-full rounded-md px-2 py-1.5 text-left font-medium ${
+        danger
+          ? "text-red-600 hover:bg-red-50"
+          : "text-slate-700 hover:bg-sky-50 hover:text-sky-700"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 

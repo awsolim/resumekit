@@ -46,6 +46,8 @@ type ControlPanelProps = {
     targetIndex: number,
   ) => void;
   onAddSection: (label: string, fields: SectionFieldConfig) => void;
+  onRenameSection: (section: SectionId, label: string) => void;
+  onDuplicateSection: (section: SectionId) => void;
   onDeleteSection: (section: SectionId) => void;
   onAddBlock: (section: SectionId) => void;
   onUpdateBlock: (blockId: string, updates: Partial<ResumeBlock>) => void;
@@ -54,6 +56,7 @@ type ControlPanelProps = {
   onAddBullet: (blockId: string, text: string) => void;
   onUpdateBullet: (blockId: string, bulletId: string, text: string) => void;
   onDeleteBullet: (blockId: string, bulletId: string) => void;
+  onRequestDangerousAction: (action: DangerousActionConfig) => void;
   onFormattingChange: (formatting: ResumeFormatting) => void;
   onFormattingReset: () => void;
   onSwitchDocument: (documentId: string) => void;
@@ -65,6 +68,13 @@ type ControlPanelProps = {
 };
 
 type ControlTab = "file" | "content" | "formatting";
+type DangerousActionConfig = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  completedMessage?: string;
+  onConfirm: () => void;
+};
 
 export default function ControlPanel({
   documents,
@@ -88,6 +98,8 @@ export default function ControlPanel({
   onReorderBlock,
   onReorderBullet,
   onAddSection,
+  onRenameSection,
+  onDuplicateSection,
   onDeleteSection,
   onAddBlock,
   onUpdateBlock,
@@ -96,6 +108,7 @@ export default function ControlPanel({
   onAddBullet,
   onUpdateBullet,
   onDeleteBullet,
+  onRequestDangerousAction,
   onFormattingChange,
   onFormattingReset,
   onSwitchDocument,
@@ -183,6 +196,8 @@ export default function ControlPanel({
             onReorderBlock={onReorderBlock}
             onReorderBullet={onReorderBullet}
             onAddSection={onAddSection}
+            onRenameSection={onRenameSection}
+            onDuplicateSection={onDuplicateSection}
             onDeleteSection={onDeleteSection}
             onAddBlock={onAddBlock}
             onUpdateBlock={onUpdateBlock}
@@ -191,6 +206,7 @@ export default function ControlPanel({
             onAddBullet={onAddBullet}
             onUpdateBullet={onUpdateBullet}
             onDeleteBullet={onDeleteBullet}
+            onRequestDangerousAction={onRequestDangerousAction}
           />
         )}
 

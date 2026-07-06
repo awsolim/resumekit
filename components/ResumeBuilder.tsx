@@ -22,6 +22,7 @@ import {
 } from "@/lib/firebase-resume-store";
 import {
   cloneFormatting,
+  createBlockId,
   createBlankDocument,
   createBulletId,
   createEmptyBlock,
@@ -36,6 +37,13 @@ import {
 } from "@/lib/resume-utils";
 
 type SaveStatus = "idle" | "local" | "loading" | "saving" | "saved" | "error";
+type DangerousActionConfig = {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  completedMessage?: string;
+  onConfirm: () => void;
+};
 
 function moveId(order: string[], draggedId: string, targetIndex: number) {
   const draggedIndex = order.indexOf(draggedId);
@@ -128,6 +136,9 @@ export default function ResumeBuilder() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [authError, setAuthError] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [pendingDangerousAction, setPendingDangerousAction] =
+    useState<DangerousActionConfig | null>(null);
+  const [completionMessage, setCompletionMessage] = useState("");
 
   const activeDocument =
     documents.find((document) => document.id === activeDocumentId) ?? documents[0];
@@ -271,6 +282,27 @@ export default function ResumeBuilder() {
     setActiveDocumentId(documentId);
   }
 
+  function requestDangerousAction(action: DangerousActionConfig) {
+    setPendingDangerousAction(action);
+  }
+
+  function showCompletionMessage(message: string) {
+    setCompletionMessage(message);
+    window.setTimeout(() => setCompletionMessage(""), 2600);
+  }
+
+  function confirmDangerousAction() {
+    if (!pendingDangerousAction) return;
+
+    const action = pendingDangerousAction;
+    action.onConfirm();
+    setPendingDangerousAction(null);
+
+    if (action.completedMessage) {
+      showCompletionMessage(action.completedMessage);
+    }
+  }
+
   function renameDocument(documentId: string, name: string) {
     const cleanName = name.trim();
     if (!cleanName) return;
@@ -308,12 +340,25 @@ export default function ResumeBuilder() {
   function deleteDocument(documentId: string) {
     if (documents.length <= 1) return;
 
-    const remainingDocuments = documents.filter((document) => document.id !== documentId);
-    const nextActiveDocument =
-      documentId === activeDocument.id ? remainingDocuments[0] : activeDocument;
+    const documentToDelete = documents.find((document) => document.id === documentId);
+    if (!documentToDelete) return;
 
-    setDocuments(remainingDocuments);
-    setActiveDocumentId(nextActiveDocument.id);
+    requestDangerousAction({
+      title: "Delete resume?",
+      message: `Are you sure you want to delete "${documentToDelete.documentName}"? This only deletes it from your ResumeKit account.`,
+      confirmLabel: "Delete",
+      completedMessage: "Resume deleted.",
+      onConfirm: () => {
+        const remainingDocuments = documents.filter(
+          (document) => document.id !== documentId,
+        );
+        const nextActiveDocument =
+          documentId === activeDocument.id ? remainingDocuments[0] : activeDocument;
+
+        setDocuments(remainingDocuments);
+        setActiveDocumentId(nextActiveDocument.id);
+      },
+    });
   }
 
   function updatePageSize(pageSize: PageSize) {
@@ -544,30 +589,40 @@ export default function ResumeBuilder() {
   }
 
   function deleteBullet(blockId: string, bulletId: string) {
-    updateActiveDocument((document) => ({
-      ...document,
-      blocks: document.blocks.map((block) =>
-        block.id === blockId
-          ? {
-              ...block,
-              bullets: block.bullets.filter((bullet) => bullet.id !== bulletId),
-            }
-          : block,
-      ),
-      selection: {
-        ...document.selection,
-        selectedBlockIds: document.selection.selectedBlockIds,
-        selectedBulletIds: document.selection.selectedBulletIds.filter(
-          (id) => id !== bulletId,
-        ),
+    requestDangerousAction({
+      title: "Delete bullet?",
+      message: "Are you sure you want to delete this bullet point?",
+      confirmLabel: "Delete",
+      completedMessage: "Bullet deleted.",
+      onConfirm: () => {
+        updateActiveDocument((document) => ({
+          ...document,
+          blocks: document.blocks.map((block) =>
+            block.id === blockId
+              ? {
+                  ...block,
+                  bullets: block.bullets.filter(
+                    (bullet) => bullet.id !== bulletId,
+                  ),
+                }
+              : block,
+          ),
+          selection: {
+            ...document.selection,
+            selectedBlockIds: document.selection.selectedBlockIds,
+            selectedBulletIds: document.selection.selectedBulletIds.filter(
+              (id) => id !== bulletId,
+            ),
+          },
+          bulletOrder: {
+            ...document.bulletOrder,
+            [blockId]: (document.bulletOrder[blockId] ?? []).filter(
+              (id) => id !== bulletId,
+            ),
+          },
+        }));
       },
-      bulletOrder: {
-        ...document.bulletOrder,
-        [blockId]: (document.bulletOrder[blockId] ?? []).filter(
-          (id) => id !== bulletId,
-        ),
-      },
-    }));
+    });
   }
 
   function updateBlock(blockId: string, updates: Partial<ResumeBlock>) {
@@ -651,37 +706,40 @@ export default function ResumeBuilder() {
     const block = activeDocument.blocks.find((item) => item.id === blockId);
     if (!block) return;
 
-    const confirmed = window.confirm(
-      `Delete "${block.title}" from this document only?`,
-    );
-    if (!confirmed) return;
+    requestDangerousAction({
+      title: "Delete block?",
+      message: `Are you sure you want to delete "${block.title || "Untitled Block"}" from this document?`,
+      confirmLabel: "Delete",
+      completedMessage: "Block deleted.",
+      onConfirm: () => {
+        const blockBulletIds = block.bullets.map((bullet) => bullet.id);
 
-    const blockBulletIds = block.bullets.map((bullet) => bullet.id);
+        updateActiveDocument((document) => {
+          const nextBulletOrder = { ...document.bulletOrder };
+          delete nextBulletOrder[blockId];
 
-    updateActiveDocument((document) => {
-      const nextBulletOrder = { ...document.bulletOrder };
-      delete nextBulletOrder[blockId];
-
-      return {
-        ...document,
-        blocks: document.blocks.filter((item) => item.id !== blockId),
-        selection: {
-          ...document.selection,
-          selectedBlockIds: document.selection.selectedBlockIds.filter(
-            (id) => id !== blockId,
-          ),
-          selectedBulletIds: document.selection.selectedBulletIds.filter(
-            (id) => !blockBulletIds.includes(id),
-          ),
-        },
-        blockOrder: {
-          ...document.blockOrder,
-          [block.section]: (document.blockOrder[block.section] ?? []).filter(
-            (id) => id !== blockId,
-          ),
-        },
-        bulletOrder: nextBulletOrder,
-      };
+          return {
+            ...document,
+            blocks: document.blocks.filter((item) => item.id !== blockId),
+            selection: {
+              ...document.selection,
+              selectedBlockIds: document.selection.selectedBlockIds.filter(
+                (id) => id !== blockId,
+              ),
+              selectedBulletIds: document.selection.selectedBulletIds.filter(
+                (id) => !blockBulletIds.includes(id),
+              ),
+            },
+            blockOrder: {
+              ...document.blockOrder,
+              [block.section]: (document.blockOrder[block.section] ?? []).filter(
+                (id) => id !== blockId,
+              ),
+            },
+            bulletOrder: nextBulletOrder,
+          };
+        });
+      },
     });
   }
 
@@ -702,49 +760,140 @@ export default function ResumeBuilder() {
     }));
   }
 
+  function renameSection(sectionId: SectionId, label: string) {
+    const cleanLabel = label.trim();
+    if (!cleanLabel) return;
+
+    updateActiveDocument((document) => ({
+      ...document,
+      sections: document.sections.map((section) =>
+        section.id === sectionId ? { ...section, label: cleanLabel } : section,
+      ),
+    }));
+  }
+
+  function duplicateSection(sectionId: SectionId) {
+    const section = activeDocument.sections.find((item) => item.id === sectionId);
+    if (!section) return;
+
+    const newSection = createSectionDefinition(`${section.label} Copy`, {
+      ...section.fields,
+    });
+    const orderedBlockIds =
+      activeDocument.blockOrder[sectionId] ??
+      activeDocument.blocks
+        .filter((block) => block.section === sectionId)
+        .map((block) => block.id);
+    const blockMap = new Map(activeDocument.blocks.map((block) => [block.id, block]));
+    const newBlocks = orderedBlockIds
+      .map((blockId) => blockMap.get(blockId))
+      .filter(isDefined)
+      .map((block) => {
+        const newBlockId = createBlockId(newSection.id);
+
+        return {
+          ...block,
+          id: newBlockId,
+          section: newSection.id,
+          bullets: block.bullets.map((bullet) => ({
+            ...bullet,
+            id: createBulletId(newBlockId),
+          })),
+        };
+      });
+    const sourceIndex = activeDocument.sectionOrder.indexOf(sectionId);
+
+    updateActiveDocument((document) => {
+      const nextSectionOrder = [...document.sectionOrder];
+      nextSectionOrder.splice(sourceIndex + 1, 0, newSection.id);
+
+      return {
+        ...document,
+        sections: [...document.sections, newSection],
+        blocks: [...document.blocks, ...newBlocks],
+        sectionOrder: nextSectionOrder,
+        blockOrder: {
+          ...document.blockOrder,
+          [newSection.id]: newBlocks.map((block) => block.id),
+        },
+        bulletOrder: {
+          ...document.bulletOrder,
+          ...Object.fromEntries(
+            newBlocks.map((block) => [
+              block.id,
+              block.bullets.map((bullet) => bullet.id),
+            ]),
+          ),
+        },
+        selection: {
+          ...document.selection,
+          selectedBlockIds: Array.from(
+            new Set([
+              ...document.selection.selectedBlockIds,
+              ...newBlocks.map((block) => block.id),
+            ]),
+          ),
+          selectedBulletIds: Array.from(
+            new Set([
+              ...document.selection.selectedBulletIds,
+              ...newBlocks.flatMap((block) =>
+                block.bullets.map((bullet) => bullet.id),
+              ),
+            ]),
+          ),
+        },
+      };
+    });
+  }
+
   function deleteSection(sectionId: SectionId) {
     const section = activeDocument.sections.find((item) => item.id === sectionId);
     if (!section) return;
 
-    const confirmed = window.confirm(
-      `Delete "${section.label}" and all blocks inside it from the active document only? Other documents will not be changed.`,
-    );
-    if (!confirmed) return;
-
-    const blocksToDelete = activeDocument.blocks.filter(
-      (block) => block.section === sectionId,
-    );
-    const blockIdsToDelete = new Set(blocksToDelete.map((block) => block.id));
-    const bulletIdsToDelete = new Set(
-      blocksToDelete.flatMap((block) => block.bullets.map((bullet) => bullet.id)),
-    );
-
-    updateActiveDocument((document) => {
-      const nextBlockOrder = { ...document.blockOrder };
-      delete nextBlockOrder[sectionId];
-
-      const nextBulletOrder = { ...document.bulletOrder };
-      blockIdsToDelete.forEach((blockId) => {
-        delete nextBulletOrder[blockId];
-      });
-
-      return {
-        ...document,
-        sections: document.sections.filter((item) => item.id !== sectionId),
-        blocks: document.blocks.filter((block) => block.section !== sectionId),
-        sectionOrder: document.sectionOrder.filter((id) => id !== sectionId),
-        blockOrder: nextBlockOrder,
-        bulletOrder: nextBulletOrder,
-        selection: {
-          ...document.selection,
-          selectedBlockIds: document.selection.selectedBlockIds.filter(
-            (id) => !blockIdsToDelete.has(id),
+    requestDangerousAction({
+      title: "Delete section?",
+      message: `Are you sure you want to delete "${section.label}" and everything inside it? Other resumes will not be changed.`,
+      confirmLabel: "Delete",
+      completedMessage: "Section deleted.",
+      onConfirm: () => {
+        const blocksToDelete = activeDocument.blocks.filter(
+          (block) => block.section === sectionId,
+        );
+        const blockIdsToDelete = new Set(blocksToDelete.map((block) => block.id));
+        const bulletIdsToDelete = new Set(
+          blocksToDelete.flatMap((block) =>
+            block.bullets.map((bullet) => bullet.id),
           ),
-          selectedBulletIds: document.selection.selectedBulletIds.filter(
-            (id) => !bulletIdsToDelete.has(id),
-          ),
-        },
-      };
+        );
+
+        updateActiveDocument((document) => {
+          const nextBlockOrder = { ...document.blockOrder };
+          delete nextBlockOrder[sectionId];
+
+          const nextBulletOrder = { ...document.bulletOrder };
+          blockIdsToDelete.forEach((blockId) => {
+            delete nextBulletOrder[blockId];
+          });
+
+          return {
+            ...document,
+            sections: document.sections.filter((item) => item.id !== sectionId),
+            blocks: document.blocks.filter((block) => block.section !== sectionId),
+            sectionOrder: document.sectionOrder.filter((id) => id !== sectionId),
+            blockOrder: nextBlockOrder,
+            bulletOrder: nextBulletOrder,
+            selection: {
+              ...document.selection,
+              selectedBlockIds: document.selection.selectedBlockIds.filter(
+                (id) => !blockIdsToDelete.has(id),
+              ),
+              selectedBulletIds: document.selection.selectedBulletIds.filter(
+                (id) => !bulletIdsToDelete.has(id),
+              ),
+            },
+          };
+        });
+      },
     });
   }
 
@@ -883,6 +1032,8 @@ export default function ResumeBuilder() {
             onReorderBlock={reorderBlock}
             onReorderBullet={reorderBullet}
             onAddSection={addSection}
+            onRenameSection={renameSection}
+            onDuplicateSection={duplicateSection}
             onDeleteSection={deleteSection}
             onAddBlock={addBlock}
             onUpdateBlock={updateBlock}
@@ -891,6 +1042,7 @@ export default function ResumeBuilder() {
             onAddBullet={addBullet}
             onUpdateBullet={updateBullet}
             onDeleteBullet={deleteBullet}
+            onRequestDangerousAction={requestDangerousAction}
             onFormattingChange={updateFormatting}
             onFormattingReset={resetFormatting}
             onSwitchDocument={switchDocument}
@@ -913,7 +1065,62 @@ export default function ResumeBuilder() {
           />
         </div>
       </div>
+
+      {pendingDangerousAction && (
+        <ConfirmationModal
+          action={pendingDangerousAction}
+          onCancel={() => setPendingDangerousAction(null)}
+          onConfirm={confirmDangerousAction}
+        />
+      )}
+
+      {completionMessage && <CompletionToast message={completionMessage} />}
     </main>
+  );
+}
+
+function ConfirmationModal({
+  action,
+  onCancel,
+  onConfirm,
+}: {
+  action: DangerousActionConfig;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/35 p-4 print:hidden">
+      <div className="w-full max-w-sm rounded-xl border border-sky-100 bg-white p-5 shadow-2xl shadow-sky-950/10">
+        <h2 className="text-lg font-semibold text-slate-950">{action.title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{action.message}</p>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-sky-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700"
+          >
+            {action.confirmLabel ?? "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompletionToast({ message }: { message: string }) {
+  return (
+    <div className="fixed bottom-5 right-5 z-50 rounded-full border border-sky-100 bg-white px-4 py-2 text-sm font-semibold text-sky-700 shadow-xl shadow-sky-950/10 print:hidden">
+      {message}
+    </div>
   );
 }
 
