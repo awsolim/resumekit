@@ -12,8 +12,6 @@ import type {
   SectionId,
 } from "@/types/resume";
 
-export const STORAGE_KEY = "resumekit-state-v1";
-
 export const defaultTextStyles = {
   name: {
     fontFamily: "",
@@ -598,10 +596,9 @@ function normalizeDocument(
 ): ResumeDocument | null {
   if (!document.id || !document.documentName) return null;
 
-  const blocks =
-    Array.isArray(document.blocks) && document.blocks.length > 0
-      ? cloneBlocks(document.blocks)
-      : cloneBlocks(fallbackBlocks);
+  const blocks = Array.isArray(document.blocks)
+    ? cloneBlocks(document.blocks)
+    : cloneBlocks(fallbackBlocks);
   const sections =
     Array.isArray(document.sections) && document.sections.length > 0
       ? document.sections.map(normalizeSectionDefinition).filter(isDefined)
@@ -721,17 +718,6 @@ export function normalizeStoredState(value: unknown): ResumeKitState | null {
       ? candidate.activeDocumentId!
       : documents[0].id,
   };
-}
-
-export function readStoredState(): ResumeKitState | null {
-  try {
-    const rawState = window.localStorage.getItem(STORAGE_KEY);
-    if (!rawState) return null;
-
-    return normalizeStoredState(JSON.parse(rawState));
-  } catch {
-    return null;
-  }
 }
 
 export function isDefined<T>(value: T | undefined | null): value is T {

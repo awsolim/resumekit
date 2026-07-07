@@ -26,17 +26,15 @@ import {
   createBlankDocument,
   createBulletId,
   createEmptyBlock,
-  createInitialState,
+  createEmptyUserState,
   createSectionDefinition,
   defaultFormatting,
   duplicateBlock,
   duplicateDocument,
   isDefined,
-  readStoredState,
-  STORAGE_KEY,
 } from "@/lib/resume-utils";
 
-type SaveStatus = "idle" | "local" | "loading" | "saving" | "saved" | "error";
+type SaveStatus = "idle" | "loading" | "saving" | "saved" | "error";
 type DangerousActionConfig = {
   title: string;
   message: string;
@@ -121,7 +119,7 @@ function getSelectedHeader(document: ResumeDocument) {
 }
 
 export default function ResumeBuilder() {
-  const initialState = useMemo(() => createInitialState(), []);
+  const initialState = useMemo(() => createEmptyUserState(), []);
 
   const [documents, setDocuments] = useState<ResumeDocument[]>(
     initialState.documents,
@@ -159,24 +157,18 @@ export default function ResumeBuilder() {
   );
 
   useEffect(() => {
-    const storedState = readStoredState();
-
-    if (storedState) {
-      queueMicrotask(() => {
-        setDocuments(storedState.documents);
-        setActiveDocumentId(storedState.activeDocumentId);
-      });
-    }
-
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
       setAuthUser(user);
       setAuthReady(true);
       setAuthError("");
 
       if (!user) {
+        const emptyState = createEmptyUserState();
+        setDocuments(emptyState.documents);
+        setActiveDocumentId(emptyState.activeDocumentId);
         setCloudReady(false);
         setIsCloudLoading(false);
-        setSaveStatus("local");
+        setSaveStatus("idle");
         return;
       }
 
@@ -188,7 +180,6 @@ export default function ResumeBuilder() {
         const cloudState = await loadResumeState(user.uid);
         setDocuments(cloudState.documents);
         setActiveDocumentId(cloudState.activeDocumentId);
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudState));
         setCloudReady(true);
         setSaveStatus("saved");
       } catch (error) {
@@ -207,20 +198,13 @@ export default function ResumeBuilder() {
 
   useEffect(() => {
     if (!authReady) return;
+    if (!authUser) return;
+    if (!cloudReady || isCloudLoading) return;
 
     const stateToStore: ResumeKitState = {
       documents,
       activeDocumentId,
     };
-
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToStore));
-
-    if (!authUser) {
-      queueMicrotask(() => setSaveStatus("local"));
-      return;
-    }
-
-    if (!cloudReady || isCloudLoading) return;
 
     queueMicrotask(() => setSaveStatus("saving"));
 
@@ -948,6 +932,41 @@ export default function ResumeBuilder() {
     }
   }
 
+  if (!authReady) {
+    return (
+      <AuthGate
+        status="Checking your account"
+        detail="ResumeKit is loading your sign-in state."
+        authError={authError}
+        onSignIn={signInWithGoogle}
+        signInDisabled
+      />
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <AuthGate
+        status="Sign in to use ResumeKit"
+        detail="Your resumes are saved to your account. Guest editing and local-only saves are turned off."
+        authError={authError}
+        onSignIn={signInWithGoogle}
+      />
+    );
+  }
+
+  if (isCloudLoading || !cloudReady) {
+    return (
+      <AuthGate
+        status="Loading your resumes"
+        detail="ResumeKit is opening the resumes saved to your account."
+        authError={authError}
+        onSignIn={signInWithGoogle}
+        signInDisabled
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen bg-white text-slate-950 print:bg-white print:p-0">
       <div className="mx-auto max-w-[1500px] print:max-w-none">
@@ -1079,6 +1098,43 @@ export default function ResumeBuilder() {
   );
 }
 
+function AuthGate({
+  status,
+  detail,
+  authError,
+  signInDisabled,
+  onSignIn,
+}: {
+  status: string;
+  detail: string;
+  authError: string;
+  signInDisabled?: boolean;
+  onSignIn: () => void;
+}) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-white px-5 text-slate-950">
+      <section className="w-full max-w-md">
+        <span className="block text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">
+          ResumeKit
+        </span>
+        <h1 className="mt-3 text-3xl font-bold tracking-tight">{status}</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600">{detail}</p>
+
+        <button
+          type="button"
+          onClick={onSignIn}
+          disabled={signInDisabled}
+          className="mt-6 rounded-full bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Sign In With Google
+        </button>
+
+        {authError && <p className="mt-4 text-sm text-red-600">{authError}</p>}
+      </section>
+    </main>
+  );
+}
+
 function ConfirmationModal({
   action,
   onCancel,
@@ -1125,7 +1181,7 @@ function CompletionToast({ message }: { message: string }) {
 }
 
 function statusLabel(status: SaveStatus, user: User | null) {
-  if (!user) return "Saved on this device";
+  if (!user) return "Account required";
 
   if (status === "loading") return "Loading cloud resumes";
   if (status === "saving") return "Saving";
